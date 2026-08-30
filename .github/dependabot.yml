@@ -1,0 +1,17 @@
+# The reusable workflows live here, so this is the one place that has to stay
+# current: a stale action version here is inherited by every repo that calls it.
+#
+# Dependabot moved the portfolio from checkout@v4 to @v7 and setup-python@v5 to
+# @v7 without anyone noticing the gap. This is what stops that recurring.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+    labels: ["dependencies", "ci"]
+    groups:
+      actions:
+        patterns: ["*"]
