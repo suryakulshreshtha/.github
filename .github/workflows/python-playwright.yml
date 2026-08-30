@@ -1,0 +1,154 @@
+name: Python Playwright suite
+
+# Reusable workflow. Called by the Forkable* Python repos so that the browser
+# caching, the version pinning and the hardening live in ONE file instead of
+# five that drift apart -- which is exactly what the audit found.
+#
+# Deliberately matched to what these repos have TODAY: requirements.txt, ruff,
+# pytest, Playwright. No uv lockfile, no mypy, no coverage gate yet -- those
+# are added here once every caller can satisfy them, not before.
+#
+# Call it with:
+#   jobs:
+#     suite:
+#       uses: suryakulshreshtha/.github/.github/workflows/python-playwright.yml@v1
+#       with:
+#         working-directory: PlaywrightSelfHealer
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Subdirectory holding requirements.txt and the tests."
+        type: string
+        default: "."
+      python-version:
+        type: string
+        default: "3.12"
+      browsers:
+        description: 'JSON array, e.g. ''["chromium", "firefox"]''. Each becomes a matrix leg.'
+        type: string
+        default: '["chromium"]'
+      requirements:
+        description: "Requirements file, relative to working-directory."
+        type: string
+        default: "requirements.txt"
+      lint-paths:
+        description: "Paths for ruff. Empty string skips linting."
+        type: string
+        default: "."
+      pytest-args:
+        description: 'Extra pytest arguments, e.g. -m "not e2e".'
+        type: string
+        default: ""
+      needs-browser:
+        description: "False for API-only suites -- saves ~90s of browser install."
+        type: boolean
+        default: true
+      report-path:
+        description: "Artifact path, relative to working-directory."
+        type: string
+        default: "reports/"
+
+# A called workflow can only REDUCE the permissions the caller granted, never
+# add to them. Setting it here means a caller that forgets still gets read-only.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    # Without a ceiling, a hung browser burns the 360-minute default.
+    timeout-minutes: 25
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    strategy:
+      # A webkit failure must not cancel the chromium leg. You want the whole
+      # picture from one run, not a game of whack-a-mole.
+      fail-fast: false
+      matrix:
+        browser: ${{ fromJSON(inputs.browsers) }}
+
+    steps:
+      # NOTE: pinned by tag, not SHA. Pin properly with a tool that resolves
+      # real SHAs -- `go install github.com/suzuki-shunsuke/pinact/cmd/pinact@latest`
+      # then `pinact run` -- and let Dependabot keep them current.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+          cache: pip
+          cache-dependency-path: ${{ inputs.working-directory }}/${{ inputs.requirements }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r "${{ inputs.requirements }}"
+
+      # Seconds, not minutes, and it catches the cheap failures first.
+      # --output-format=github puts errors inline on the Files-changed tab.
+      - name: Ruff
+        if: inputs.lint-paths != ''
+        run: |
+          python -m pip install --quiet ruff
+          ruff check --output-format=github ${{ inputs.lint-paths }}
+
+      # Imports every test module without running it. Catches an import error,
+      # a bad fixture or an unregistered marker in ~5s instead of 6 minutes in.
+      - name: Collect tests
+        run: pytest --collect-only -q ${{ inputs.pytest-args }}
+
+      # The cache key includes the RESOLVED Playwright version, so upgrading the
+      # client always fetches matching binaries. A stale-browser/new-client
+      # mismatch is a horrible bug to diagnose.
+      - name: Resolve Playwright version
+        if: inputs.needs-browser
+        id: pw
+        run: |
+          echo "version=$(python -c 'import importlib.metadata as m; print(m.version("playwright"))')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache browser binaries
+        if: inputs.needs-browser
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ matrix.browser }}
+
+      - name: Install browser
+        if: inputs.needs-browser && steps.pw-cache.outputs.cache-hit != 'true'
+        run: python -m playwright install --with-deps ${{ matrix.browser }}
+
+      # Even on a cache HIT the OS-level shared libraries must be installed:
+      # they live in /usr/lib, outside the cached directory. Forgetting this is
+      # the most common broken-cache bug in Playwright CI.
+      - name: Install OS dependencies
+        if: inputs.needs-browser && steps.pw-cache.outputs.cache-hit == 'true'
+        run: python -m playwright install-deps ${{ matrix.browser }}
+
+      - name: Run tests
+        run: |
+          mkdir -p "$(dirname "${{ inputs.report-path }}")" || true
+          if [ "${{ inputs.needs-browser }}" = "true" ]; then
+            pytest --browser ${{ matrix.browser }} ${{ inputs.pytest-args }} \
+                   --html="${{ inputs.report-path }}/report.html" --self-contained-html
+          else
+            pytest ${{ inputs.pytest-args }} \
+                   --html="${{ inputs.report-path }}/report.html" --self-contained-html
+          fi
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: report-${{ matrix.browser }}-${{ github.run_attempt }}
+          path: |
+            ${{ inputs.working-directory }}/${{ inputs.report-path }}
+            ${{ inputs.working-directory }}/test-results/
+          retention-days: 14
+          if-no-files-found: ignore

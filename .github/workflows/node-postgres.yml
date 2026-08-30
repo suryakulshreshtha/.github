@@ -1,0 +1,137 @@
+name: Node + Postgres suite
+
+# Reusable workflow for a Node package that needs a real PostgreSQL.
+#
+# Separate from python-playwright.yml on purpose: one workflow serving both
+# runtimes becomes a wall of `if:` conditions nobody can read, which is the
+# problem the shared pipeline exists to solve.
+#
+# Separate from node-package.yml for a harder reason: GitHub Actions has no
+# supported way to make a `services:` block conditional. The empty-image trick
+# is a community workaround with no documented guarantee, so this workflow
+# ALWAYS starts Postgres and node-package.yml never does. Two short files that
+# certainly work beat one clever file that might.
+#
+# Call it with:
+#   jobs:
+#     backend:
+#       uses: suryakulshreshtha/.github/.github/workflows/node-postgres.yml@v1
+#       with:
+#         working-directory: backend
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Package directory holding package.json."
+        type: string
+        default: "."
+      node-version:
+        type: string
+        default: "22"
+      migrations-glob:
+        description: "Migrations to apply, relative to the repo root."
+        type: string
+        default: "backend/migrations/0*.sql"
+      database-name:
+        type: string
+        default: "forkable_learning_test"
+      apply-seed:
+        description: "Include *seed* migrations. Off for test DBs, which truncate anyway."
+        type: boolean
+        default: false
+      test-command:
+        description: "npm script(s) to run for tests."
+        type: string
+        default: "npm test"
+      build:
+        type: boolean
+        default: true
+      postgres-image:
+        type: string
+        default: "postgres:16-alpine"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    services:
+      postgres:
+        image: ${{ inputs.postgres-image }}
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: ${{ inputs.database-name }}
+        ports:
+          - 5432:5432
+        # Without a health check the job races the database and fails on a
+        # cold runner roughly one time in ten.
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      # NOTE: pinned by tag, not SHA. See python-playwright.yml for the
+      # `pinact run` procedure.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      - run: npm ci
+
+      # Every migration in order, with ON_ERROR_STOP so a broken one fails the
+      # job instead of leaving a half-built schema that the tests then fail
+      # against for a confusing reason.
+      - name: Apply migrations
+        working-directory: ${{ github.workspace }}
+        env:
+          PGPASSWORD: postgres
+        run: |
+          shopt -s nullglob
+          for migration in ${{ inputs.migrations-glob }}; do
+            case "$migration" in
+              *seed*)
+                if [ "${{ inputs.apply-seed }}" != "true" ]; then
+                  echo "skipping seed: $migration"
+                  continue
+                fi
+                ;;
+            esac
+            echo "applying $migration"
+            psql -v ON_ERROR_STOP=1 -h localhost -U postgres \
+                 -d "${{ inputs.database-name }}" -f "$migration"
+          done
+
+      - run: npm run lint
+
+      - name: Type-check
+        run: npx tsc --noEmit || npx tsc -b
+
+      - name: Tests
+        env:
+          NODE_ENV: test
+          TEST_PGHOST: localhost
+          TEST_PGPORT: "5432"
+          TEST_PGUSER: postgres
+          TEST_PGPASSWORD: postgres
+          TEST_PGDATABASE: ${{ inputs.database-name }}
+        run: ${{ inputs.test-command }}
+
+      - name: Build
+        if: inputs.build
+        run: npm run build

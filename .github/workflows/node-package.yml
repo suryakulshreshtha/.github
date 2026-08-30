@@ -1,0 +1,75 @@
+name: Node package
+
+# Reusable workflow for a Node package that needs no database: lint, type-check,
+# test, build. The frontend half of a monorepo, or any standalone package.
+#
+# See node-postgres.yml for why this is a separate file rather than a flag:
+# GitHub Actions has no supported way to make a `services:` block conditional.
+#
+# Call it with:
+#   jobs:
+#     frontend:
+#       uses: suryakulshreshtha/.github/.github/workflows/node-package.yml@v1
+#       with:
+#         working-directory: frontend
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        description: "Package directory holding package.json."
+        type: string
+        default: "."
+      node-version:
+        type: string
+        default: "22"
+      test-command:
+        type: string
+        default: "npm test"
+      typecheck-command:
+        description: "tsc invocation. `tsc -b` for a project-references build."
+        type: string
+        default: "npx tsc --noEmit"
+      build:
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: lint, types, tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+
+    steps:
+      # NOTE: pinned by tag, not SHA. See python-playwright.yml for the
+      # `pinact run` procedure.
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+
+      # `npm ci` not `npm install`: it installs exactly the lockfile and fails
+      # if package.json and the lock have drifted apart.
+      - run: npm ci
+
+      - run: npm run lint
+
+      - name: Type-check
+        run: ${{ inputs.typecheck-command }}
+
+      - name: Tests
+        run: ${{ inputs.test-command }}
+
+      - name: Build
+        if: inputs.build
+        run: npm run build
