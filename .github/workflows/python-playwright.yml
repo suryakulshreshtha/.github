@@ -58,7 +58,7 @@ permissions:
 jobs:
   test:
     name: pytest (${{ matrix.browser }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Without a ceiling, a hung browser burns the 360-minute default.
     timeout-minutes: 25
 
