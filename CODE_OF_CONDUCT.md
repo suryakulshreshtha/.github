@@ -31,9 +31,12 @@ race, religion, or sexual identity and orientation.
 
 ## Enforcement
 
-Report unacceptable behaviour to **kulshreshtha.surya@engineer.com**. Reports
-will be reviewed and investigated promptly and fairly, and the reporter's
-privacy will be respected.
+Report unacceptable behaviour privately through GitHub: use **Security → Report
+a vulnerability** on the repository concerned and put `CONDUCT` in the title.
+If that button is not shown, open a public issue that only asks for a private
+channel and contains **no details** of the concern, and I will reply with one.
+Reports will be reviewed and investigated promptly and fairly, and the
+reporter's privacy will be respected.
 
 I may remove, edit, or reject comments, commits, code, issues, and other
 contributions that do not align with this code of conduct, and will explain the

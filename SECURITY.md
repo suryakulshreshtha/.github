@@ -4,9 +4,10 @@
 
 Please do **not** open a public issue for a security problem.
 
-Use GitHub's private reporting instead — **Security → Report a vulnerability**
-on the affected repository — or email **kulshreshtha.surya@engineer.com** with
-`SECURITY` in the subject.
+Use GitHub's private reporting instead: **Security → Report a vulnerability**
+on the affected repository. If that button is not shown, open a public issue
+that only asks for a private channel and contains **no details** of the problem,
+and I will reply with one.
 
 Please include the repository and commit, what an attacker could do, and the
 smallest reproduction you have. A proof of concept is welcome but not required.
